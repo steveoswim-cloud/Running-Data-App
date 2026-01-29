@@ -11,8 +11,8 @@
         <div class="max-w-4xl mx-auto">
             <!-- Header -->
             <div class="bg-gradient-to-r from-orange-500 to-red-500 rounded-lg shadow-lg p-8 mb-8">
-                <h1 class="text-4xl font-bold text-white mb-2">🏃 SteveSpeed 🏃</h1>
-                <p class="text-orange-100">Last 3 months of running activities</p>
+                <h1 class="text-4xl font-bold text-white mb-2">🏃 Strava Running Tracker</h1>
+                <p class="text-orange-100">Last 6 months of running activities</p>
             </div>
 
             <!-- Not Connected State -->
@@ -151,9 +151,9 @@
 
                 const athlete = await athleteResponse.json();
 
-                // Get activities from last 3 months
-                const oneYearAgo = Math.floor(Date.now() / 1000) - (120 * 24 * 60 * 60);
-                const activitiesResponse = await fetch(`https://www.strava.com/api/v3/athlete/activities?after=${oneYearAgo}&per_page=200`, {
+                // Get activities from last 6 months
+                const sixMonthsAgo = Math.floor(Date.now() / 1000) - (180 * 24 * 60 * 60);
+                const activitiesResponse = await fetch(`https://www.strava.com/api/v3/athlete/activities?after=${sixMonthsAgo}&per_page=1000`, {
                     headers: {
                         'Authorization': `Bearer ${accessToken}`
                     }
@@ -186,7 +186,7 @@
             container.innerHTML = '';
 
             if (activities.length === 0) {
-                container.innerHTML = '<div class="bg-white rounded-lg shadow p-8 text-center text-gray-600">No running activities found in the last 12 months</div>';
+                container.innerHTML = '<div class="bg-white rounded-lg shadow p-8 text-center text-gray-600">No running activities found in the last 6 months</div>';
             } else {
                 // Add summary card
                 const summaryCard = createSummaryCard(activities);
@@ -205,7 +205,7 @@
 
         function createSummaryCard(activities) {
             const div = document.createElement('div');
-            div.className = 'bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg shadow-lg p-6 mb-6 text-white';
+            div.className = 'bg-white rounded-lg shadow-lg p-6 mb-6';
 
             const totalDistance = activities.reduce((sum, a) => sum + a.distance, 0) / 1000;
             const totalTime = activities.reduce((sum, a) => sum + a.moving_time, 0);
@@ -213,28 +213,167 @@
             const avgDistance = totalDistance / activities.length;
 
             div.innerHTML = `
-                <h3 class="text-2xl font-bold mb-4">📊 Last 3 Months Summary</h3>
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
-                    <div>
-                        <p class="text-blue-100 text-sm mb-1">Total Runs</p>
-                        <p class="text-3xl font-bold">${activities.length}</p>
+                <h3 class="text-2xl font-bold mb-6 text-gray-800">📊 Last 6 Months Summary</h3>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+                    <div class="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg">
+                        <p class="text-blue-600 text-sm mb-1 font-medium">Total Runs</p>
+                        <p class="text-3xl font-bold text-blue-700">${activities.length}</p>
                     </div>
-                    <div>
-                        <p class="text-blue-100 text-sm mb-1">Total Distance</p>
-                        <p class="text-3xl font-bold">${totalDistance.toFixed(1)} <span class="text-lg">km</span></p>
+                    <div class="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg">
+                        <p class="text-green-600 text-sm mb-1 font-medium">Total Distance</p>
+                        <p class="text-3xl font-bold text-green-700">${totalDistance.toFixed(1)} <span class="text-lg">km</span></p>
                     </div>
-                    <div>
-                        <p class="text-blue-100 text-sm mb-1">Total Time</p>
-                        <p class="text-3xl font-bold">${formatDuration(totalTime)}</p>
+                    <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg">
+                        <p class="text-purple-600 text-sm mb-1 font-medium">Total Time</p>
+                        <p class="text-3xl font-bold text-purple-700">${formatDuration(totalTime)}</p>
                     </div>
-                    <div>
-                        <p class="text-blue-100 text-sm mb-1">Avg Distance</p>
-                        <p class="text-3xl font-bold">${avgDistance.toFixed(1)} <span class="text-lg">km</span></p>
+                    <div class="bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 rounded-lg">
+                        <p class="text-indigo-600 text-sm mb-1 font-medium">Avg Distance</p>
+                        <p class="text-3xl font-bold text-indigo-700">${avgDistance.toFixed(1)} <span class="text-lg">km</span></p>
                     </div>
+                </div>
+                <div class="border-t pt-6">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-4">Weekly Trends</h4>
+                    <canvas id="weeklyTrendsChart"></canvas>
                 </div>
             `;
 
+            // After adding to DOM, create the chart
+            setTimeout(() => {
+                createWeeklyTrendsChart(activities);
+            }, 0);
+
             return div;
+        }
+
+        function createWeeklyTrendsChart(activities) {
+            // Group activities by week
+            const weeklyData = {};
+            
+            activities.forEach(activity => {
+                const date = new Date(activity.start_date);
+                // Get the Monday of the week
+                const weekStart = new Date(date);
+                weekStart.setDate(date.getDate() - date.getDay() + (date.getDay() === 0 ? -6 : 1));
+                const weekKey = weekStart.toISOString().split('T')[0];
+                
+                if (!weeklyData[weekKey]) {
+                    weeklyData[weekKey] = {
+                        distance: 0,
+                        elevation: 0
+                    };
+                }
+                
+                weeklyData[weekKey].distance += activity.distance / 1000;
+                weeklyData[weekKey].elevation += activity.total_elevation_gain;
+            });
+
+            // Sort by date and prepare data
+            const sortedWeeks = Object.keys(weeklyData).sort();
+            const labels = sortedWeeks.map(week => {
+                const date = new Date(week);
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            });
+            const distances = sortedWeeks.map(week => weeklyData[week].distance.toFixed(1));
+            const elevations = sortedWeeks.map(week => Math.round(weeklyData[week].elevation));
+
+            const ctx = document.getElementById('weeklyTrendsChart');
+            if (!ctx) return;
+
+            new Chart(ctx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Distance (km)',
+                            data: distances,
+                            borderColor: 'rgb(59, 130, 246)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.4,
+                            yAxisID: 'y',
+                            fill: true
+                        },
+                        {
+                            label: 'Elevation (m)',
+                            data: elevations,
+                            borderColor: 'rgb(251, 146, 60)',
+                            backgroundColor: 'rgba(251, 146, 60, 0.1)',
+                            tension: 0.4,
+                            yAxisID: 'y1',
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed.y !== null) {
+                                        label += context.parsed.y;
+                                        label += context.dataset.label.includes('Distance') ? ' km' : ' m';
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Distance (km)',
+                                color: 'rgb(59, 130, 246)'
+                            },
+                            ticks: {
+                                color: 'rgb(59, 130, 246)'
+                            },
+                            grid: {
+                                color: 'rgba(59, 130, 246, 0.1)'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'Elevation (m)',
+                                color: 'rgb(251, 146, 60)'
+                            },
+                            ticks: {
+                                color: 'rgb(251, 146, 60)'
+                            },
+                            grid: {
+                                drawOnChartArea: false,
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    }
+                }
+            });
         }
 
         function createActivityCard(activity) {
