@@ -3,26 +3,297 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YAY!</title>
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            min-height: 100vh;
-            background-color: red;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-family: Arial, sans-serif;
-        }
-        h1 {
-            color: black;
-            font-size: 72px;
-            margin: 0;
-        }
-    </style>
+    <title>Strava Activity Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <h1>YAY!</h1>
+<body class="bg-gray-50">
+    <div class="min-h-screen p-8">
+        <div class="max-w-4xl mx-auto">
+            <!-- Header -->
+            <div class="bg-gradient-to-r from-orange-500 to-red-500 rounded-lg shadow-lg p-8 mb-8">
+                <h1 class="text-4xl font-bold text-white mb-2">🏃 Strava Activity Tracker</h1>
+                <p class="text-orange-100">Your last 5 activities</p>
+            </div>
+
+            <!-- Not Connected State -->
+            <div id="not-connected" class="bg-white rounded-lg shadow-lg p-12 text-center">
+                <div class="mb-6">
+                    <svg class="mx-auto h-24 w-24 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">Connect to Strava</h2>
+                <p class="text-gray-600 mb-8">Authorize this app to view your recent activities</p>
+                <button id="connect-btn" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-8 rounded-lg transition-colors">
+                    Connect with Strava
+                </button>
+            </div>
+
+            <!-- Loading State -->
+            <div id="loading" class="hidden text-center py-12">
+                <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+                <p class="mt-4 text-gray-600">Loading your activities...</p>
+            </div>
+
+            <!-- Error State -->
+            <div id="error" class="hidden bg-red-50 border-l-4 border-red-500 p-4 mb-8 rounded">
+                <div class="flex items-start">
+                    <svg class="h-5 w-5 text-red-400 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                    </svg>
+                    <div class="ml-3">
+                        <p class="text-sm text-red-700" id="error-message"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connected State -->
+            <div id="connected" class="hidden">
+                <!-- User Info -->
+                <div class="bg-white rounded-lg shadow p-6 mb-6 flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <img id="user-avatar" src="" alt="Profile" class="w-16 h-16 rounded-full">
+                        <div>
+                            <h3 id="user-name" class="text-xl font-bold text-gray-800"></h3>
+                            <p class="text-gray-600">Connected to Strava</p>
+                        </div>
+                    </div>
+                    <button id="disconnect-btn" class="bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
+                        Disconnect
+                    </button>
+                </div>
+
+                <!-- Activities -->
+                <div id="activities-container" class="space-y-4">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CLIENT_ID = '198838';
+        const REDIRECT_URI = window.location.origin + window.location.pathname;
+        const SCOPE = 'activity:read_all';
+        const TOKEN_STORAGE = 'strava_tokens';
+
+        // Check for OAuth callback
+        const urlParams = new URLSearchParams(window.location.search);
+        const authCode = urlParams.get('code');
+
+        if (authCode) {
+            handleAuthCallback(authCode);
+        } else {
+            checkExistingAuth();
+        }
+
+        document.getElementById('connect-btn').addEventListener('click', connectToStrava);
+        document.getElementById('disconnect-btn').addEventListener('click', disconnect);
+
+        function connectToStrava() {
+            const authUrl = `https://www.strava.com/oauth/authorize?client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&approval_prompt=auto&scope=${SCOPE}`;
+            window.location.href = authUrl;
+        }
+
+        async function handleAuthCallback(code) {
+            showLoading();
+            
+            try {
+                // Call our Netlify function to exchange the code
+                const response = await fetch('/.netlify/functions/exchange-token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ code })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to exchange authorization code');
+                }
+
+                const tokens = await response.json();
+                storeTokens(tokens);
+                
+                // Clear the URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+                
+                // Load activities
+                loadActivities(tokens.access_token);
+            } catch (error) {
+                showError('Authentication failed: ' + error.message);
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
+        function checkExistingAuth() {
+            const tokens = getStoredTokens();
+            if (tokens && tokens.access_token) {
+                loadActivities(tokens.access_token);
+            } else {
+                showNotConnected();
+            }
+        }
+
+        async function loadActivities(accessToken) {
+            showLoading();
+            
+            try {
+                // Get athlete info
+                const athleteResponse = await fetch('https://www.strava.com/api/v3/athlete', {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    }
+                });
+
+                if (!athleteResponse.ok) {
+                    throw new Error('Failed to fetch athlete data');
+                }
+
+                const athlete = await athleteResponse.json();
+
+                // Get activities
+                const activitiesResponse = await fetch('https://www.strava.com/api/v3/athlete/activities?per_page=5', {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    }
+                });
+
+                if (!activitiesResponse.ok) {
+                    throw new Error('Failed to fetch activities');
+                }
+
+                const activities = await activitiesResponse.json();
+                displayActivities(athlete, activities);
+            } catch (error) {
+                showError('Error loading activities: ' + error.message);
+                clearStoredTokens();
+                showNotConnected();
+            }
+        }
+
+        function displayActivities(athlete, activities) {
+            document.getElementById('user-name').textContent = `${athlete.firstname} ${athlete.lastname}`;
+            document.getElementById('user-avatar').src = athlete.profile || 'https://via.placeholder.com/64';
+
+            const container = document.getElementById('activities-container');
+            container.innerHTML = '';
+
+            if (activities.length === 0) {
+                container.innerHTML = '<div class="bg-white rounded-lg shadow p-8 text-center text-gray-600">No activities found</div>';
+            } else {
+                activities.forEach(activity => {
+                    const card = createActivityCard(activity);
+                    container.appendChild(card);
+                });
+            }
+
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('connected').classList.remove('hidden');
+        }
+
+        function createActivityCard(activity) {
+            const div = document.createElement('div');
+            div.className = 'bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow';
+
+            const date = new Date(activity.start_date).toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+
+            const distance = (activity.distance / 1000).toFixed(2);
+            const duration = formatDuration(activity.moving_time);
+            const pace = calculatePace(activity.distance, activity.moving_time);
+            const elevation = Math.round(activity.total_elevation_gain);
+
+            div.innerHTML = `
+                <div class="flex items-start justify-between mb-4">
+                    <div>
+                        <h3 class="text-xl font-bold text-gray-800">${activity.name}</h3>
+                        <p class="text-gray-600 text-sm">${date}</p>
+                    </div>
+                    <span class="px-3 py-1 bg-orange-100 text-orange-800 rounded-full text-sm font-medium">
+                        ${activity.type}
+                    </span>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                        <p class="text-gray-500 text-sm">Distance</p>
+                        <p class="text-2xl font-bold text-gray-800">${distance} <span class="text-sm text-gray-600">km</span></p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 text-sm">Duration</p>
+                        <p class="text-2xl font-bold text-gray-800">${duration}</p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 text-sm">Pace</p>
+                        <p class="text-2xl font-bold text-gray-800">${pace} <span class="text-sm text-gray-600">min/km</span></p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 text-sm">Elevation</p>
+                        <p class="text-2xl font-bold text-gray-800">${elevation} <span class="text-sm text-gray-600">m</span></p>
+                    </div>
+                </div>
+            `;
+
+            return div;
+        }
+
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            if (hours > 0) {
+                return `${hours}:${minutes.toString().padStart(2, '0')}`;
+            }
+            return `${minutes}:${(seconds % 60).toString().padStart(2, '0')}`;
+        }
+
+        function calculatePace(distanceMeters, timeSeconds) {
+            const distanceKm = distanceMeters / 1000;
+            const paceMinPerKm = timeSeconds / 60 / distanceKm;
+            const minutes = Math.floor(paceMinPerKm);
+            const seconds = Math.round((paceMinPerKm - minutes) * 60);
+            return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function disconnect() {
+            clearStoredTokens();
+            showNotConnected();
+        }
+
+        function showNotConnected() {
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('connected').classList.add('hidden');
+            document.getElementById('error').classList.add('hidden');
+            document.getElementById('not-connected').classList.remove('hidden');
+        }
+
+        function showLoading() {
+            document.getElementById('not-connected').classList.add('hidden');
+            document.getElementById('connected').classList.add('hidden');
+            document.getElementById('error').classList.add('hidden');
+            document.getElementById('loading').classList.remove('hidden');
+        }
+
+        function showError(message) {
+            document.getElementById('error-message').textContent = message;
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('error').classList.remove('hidden');
+        }
+
+        function getStoredTokens() {
+            const stored = localStorage.getItem(TOKEN_STORAGE);
+            return stored ? JSON.parse(stored) : null;
+        }
+
+        function storeTokens(tokens) {
+            localStorage.setItem(TOKEN_STORAGE, JSON.stringify(tokens));
+        }
+
+        function clearStoredTokens() {
+            localStorage.removeItem(TOKEN_STORAGE);
+        }
+    </script>
 </body>
 </html>
